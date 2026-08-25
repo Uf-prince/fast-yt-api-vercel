@@ -55,7 +55,9 @@ No environment variables needed. The `youtubei.js` dependency installs automatic
 
 ## How it works
 
-Uses `youtubei.js` with the **iOS client** which returns **pre-signed direct googlevideo.com URLs** — these don't need deciphering and bypass YouTube's throttling. Falls back through `IOS → TV → TV_EMBEDDED → ANDROID → WEB_EMBEDDED → WEB` clients.
+Uses `youtubei.js` with the **ANDROID_VR client** (primary) which returns **direct googlevideo.com URLs** without requiring a PO Token — making it work on datacenter/cloud IPs (like Vercel). Falls back through `ANDROID_VR → IOS → ANDROID → WEB → TV → TV_EMBEDDED → WEB_EMBEDDED` clients.
+
+> **Why ANDROID_VR?** YouTube blocks datacenter IPs on most clients (IOS, WEB, etc.) with "Sign in to confirm you're not a bot". The ANDROID_VR client is one of the few that doesn't require PO Token and still returns direct googlevideo CDN URLs. IOS is kept as a fallback since on some IPs it returns pre-signed URLs (no deciphering needed).
 
 ## Speed
 
@@ -66,6 +68,7 @@ Uses `youtubei.js` with the **iOS client** which returns **pre-signed direct goo
 
 ```
 api/_lib.js       # Shared youtubei.js helpers (getClient, extractId, getFormats, pickFormat)
+                   # Uses ANDROID_VR client (no PO Token, works on datacenter IPs)
 api/info.js       # GET /api/info — metadata + all format URLs
 api/download.js   # GET /api/download — stream or redirect to media file
 vercel.json       # Vercel config (maxDuration: 60s)
