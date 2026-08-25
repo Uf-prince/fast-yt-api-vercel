@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 60
+    }
+  },
+  "routes": [
+    { "src": "/api/info", "dest": "/api/info" },
+    { "src": "/api/download", "dest": "/api/download" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
