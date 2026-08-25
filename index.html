@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fast YT API ⚡ — Vercel</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:#0a0a0a; color:#e0e0e0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+.card { max-width:640px; width:100%; background:#141414; border:1px solid #222; border-radius:16px; padding:40px; }
+h1 { font-size:2rem; margin-bottom:8px; }
+h1 span { color:#ff0000; }
+.subtitle { color:#888; margin-bottom:24px; font-size:0.95rem; }
+.endpoint { background:#0d0d0d; border:1px solid #222; border-radius:10px; padding:16px; margin-bottom:12px; font-family:'SF Mono',Consolas,monospace; font-size:0.85rem; overflow-x:auto; }
+.endpoint .method { color:#ff4444; font-weight:bold; }
+.endpoint .path { color:#44aaff; }
+.endpoint .desc { color:#888; margin-top:6px; font-family:-apple-system,sans-serif; font-size:0.8rem; }
+.badge { display:inline-block; background:#1a3a1a; color:#4f4; padding:3px 10px; border-radius:20px; font-size:0.75rem; margin-bottom:16px; }
+.note { color:#666; font-size:0.8rem; margin-top:20px; line-height:1.5; }
+</style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+<div class="card">
+  <h1>Fast YT API <span>⚡</span></h1>
+  <p class="subtitle">YouTube download API — direct googlevideo CDN links via youtubei.js iOS client</p>
+  <span class="badge">Deployed on Vercel</span>
+
+  <div class="endpoint">
+    <span class="method">GET</span> <span class="path">/api/info?url=YOUTUBE_URL</span>
+    <div class="desc">Returns JSON: title, author, thumbnail, duration, and all available formats with direct download URLs</div>
+  </div>
+
+  <div class="endpoint">
+    <span class="method">GET</span> <span class="path">/api/download?url=YOUTUBE_URL&type=audio|video&quality=360|720|1080</span>
+    <div class="desc">Streams or redirects to the media file. type=audio for audio only, quality for video resolution</div>
+  </div>
+
+  <p class="note">
+    Example: <code style="color:#44aaff">/api/info?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ</code><br><br>
+    Powered by youtubei.js — returns pre-signed direct googlevideo.com URLs (fast CDN, no throttling).<br>
+    The download endpoint streams from Google's CDN, or falls back to a 302 redirect if streaming is blocked.
+  </p>
+</div>
+</body>
+</html>
