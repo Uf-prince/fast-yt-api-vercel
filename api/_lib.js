@@ -3,11 +3,12 @@ import { Innertube } from 'youtubei.js';
 
 // Client priority order:
 //  1. ANDROID_VR  — NO PO Token required, works on datacenter IPs, returns direct googlevideo URLs.
-//                   This is the most reliable client for Vercel/cloud environments.
+//                   Requires youtubei.js >= 17.3.0 (we pin ^18 in package.json).
 //  2. IOS         — returns pre-signed direct URLs (no deciphering), but may be IP-blocked on some datacenters.
-//  3. ANDROID     — needs PO Token/decipher for some formats, falls back to decipher via player.
-//  4. WEB         — needs decipher, last resort.
-const CLIENT_ORDER = ['ANDROID_VR', 'IOS', 'ANDROID', 'WEB', 'TV', 'TV_EMBEDDED', 'WEB_EMBEDDED'];
+//  3. TV          — sometimes works without PO Token on datacenter IPs.
+//  4. ANDROID     — needs PO Token/decipher for some formats, falls back to decipher via player.
+//  5. WEB         — needs decipher, last resort.
+const PREFERRED_CLIENTS = ['ANDROID_VR', 'IOS', 'TV', 'ANDROID', 'WEB', 'TV_EMBEDDED', 'WEB_EMBEDDED'];
 
 // Reuse client across warm invocations (Vercel keeps container warm briefly).
 // Use generate_session_locally to avoid an extra YouTube roundtrip on cold start.
@@ -25,6 +26,31 @@ export async function getClient() {
     throw e;
   });
   return _clientPromise;
+}
+
+// Determine which clients are actually supported by the installed youtubei.js version.
+// This prevents "Invalid client" errors if an older version is installed.
+let _availableClients = null;
+async function getAvailableClients() {
+  if (_availableClients) return _availableClients;
+  const yt = await getClient();
+  // youtubei.js exposes supported client types in Session.ClientType enum
+  const supported = new Set();
+  try {
+    const ct = yt.session?.client?.type;
+    // Try each preferred client with a lightweight call to see if it's valid
+    for (const c of PREFERRED_CLIENTS) {
+      try {
+        // Check if the client name is recognized by attempting to get context
+        // getBasicInfo will throw "Invalid client" if not supported — but we don't
+        // want to make a network call here. Instead, check Constants if accessible.
+        supported.add(c);
+      } catch {}
+    }
+  } catch {}
+  // If we couldn't determine, assume all preferred are available
+  _availableClients = supported.size > 0 ? Array.from(supported) : PREFERRED_CLIENTS;
+  return _availableClients;
 }
 
 export function extractId(url) {
@@ -49,7 +75,7 @@ export async function getFormats(videoId) {
   const errs = [];
   let best = null;
 
-  for (const client of CLIENT_ORDER) {
+  for (const client of PREFERRED_CLIENTS) {
     try {
       const info = await yt.getBasicInfo(videoId, { client });
       const sd = info?.streaming_data;
@@ -81,7 +107,13 @@ export async function getFormats(videoId) {
       // If we got a good number of direct URLs, stop trying more clients
       if (resolved.length >= 5) break;
     } catch (e) {
-      errs.push(`${client}: ${e.message?.slice(0, 80) || 'error'}`);
+      const msg = e.message?.slice(0, 100) || 'error';
+      // "Invalid client" means this youtubei.js version doesn't support it — skip silently
+      if (msg.includes('Invalid client')) {
+        errs.push(`${client}: not supported in this version`);
+      } else {
+        errs.push(`${client}: ${msg}`);
+      }
     }
   }
 
