@@ -1,0 +1,15 @@
+# render.yaml — Blueprint for one-click deploy on Render
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: fast-yt-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 18.20.4

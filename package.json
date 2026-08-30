@@ -1,9 +1,15 @@
 {
-  "name": "fast-yt-api-vercel",
+  "name": "fast-yt-api-render",
   "version": "1.0.0",
-  "description": "Fast YouTube download API for Vercel serverless — direct googlevideo URLs via youtubei.js iOS client",
+  "description": "Fast YouTube download API for Render — direct googlevideo URLs via youtubei.js (Express server)",
   "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
   "dependencies": {
+    "express": "^4.19.2",
     "youtubei.js": "^18.0.0"
   },
   "engines": {
