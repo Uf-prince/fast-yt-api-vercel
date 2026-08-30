@@ -14,6 +14,14 @@ Platform.shim.eval = async (data) => new Function(data.output)();
 //  4. ANDROID     — needs PO Token/decipher for some formats, falls back to decipher via player.
 //  5. WEB         — needs decipher, last resort.
 const PREFERRED_CLIENTS = ['ANDROID_VR', 'IOS', 'TV', 'ANDROID', 'WEB', 'TV_EMBEDDED', 'WEB_EMBEDDED'];
+// When an authenticated cookie is available, WEB / WEB_EMBEDDED / TV work best
+// (cookies are designed for the web player flow). Mobile clients (ANDROID_VR,
+// IOS, ANDROID) use their own auth mechanism and can return "failed with status"
+// (empty) errors when a browser cookie is attached — so we deprioritise them.
+const PREFERRED_CLIENTS_WITH_COOKIE = ['WEB', 'WEB_EMBEDDED', 'TV', 'TV_EMBEDDED', 'ANDROID_VR', 'IOS', 'ANDROID'];
+function getClientOrder() {
+  return YOUTUBE_COOKIE ? PREFERRED_CLIENTS_WITH_COOKIE : PREFERRED_CLIENTS;
+}
 
 // Reuse client across warm invocations (Render keeps the process alive).
 // Use generate_session_locally to avoid an extra YouTube roundtrip on cold start.
@@ -178,7 +186,7 @@ export async function getFormats(videoId) {
   // download.js). Appending pot there can actually cause 403s.
   const contentPoToken = await getPoTokenForVideo(videoId);
 
-  for (const client of PREFERRED_CLIENTS) {
+  for (const client of getClientOrder()) {
     try {
       // Pass the session PO token through the player request context so the
       // InnerTube "player" call itself isn't rejected with LOGIN_REQUIRED.
