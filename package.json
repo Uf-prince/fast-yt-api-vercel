@@ -9,7 +9,9 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "bgutils-js": "^4.0.3",
     "express": "^4.19.2",
+    "jsdom": "^29.1.1",
     "youtubei.js": "^18.0.0"
   },
   "engines": {

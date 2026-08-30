@@ -1,5 +1,10 @@
-// api/_lib.js — shared youtubei.js helper for Vercel serverless
-import { Innertube } from 'youtubei.js';
+// api/_lib.js — shared youtubei.js helper for Render (Express)
+import { Innertube, Platform } from 'youtubei.js';
+import { getPoTokenForVideo } from './poToken.js';
+
+// youtubei.js needs a JS interpreter to decipher signature-protected URLs.
+// Provide one using the Function constructor (same approach as the bgutils examples).
+Platform.shim.eval = async (data) => new Function(data.output)();
 
 // Client priority order:
 //  1. ANDROID_VR  — NO PO Token required, works on datacenter IPs, returns direct googlevideo URLs.
@@ -10,10 +15,22 @@ import { Innertube } from 'youtubei.js';
 //  5. WEB         — needs decipher, last resort.
 const PREFERRED_CLIENTS = ['ANDROID_VR', 'IOS', 'TV', 'ANDROID', 'WEB', 'TV_EMBEDDED', 'WEB_EMBEDDED'];
 
-// Reuse client across warm invocations (Vercel keeps container warm briefly).
+// Reuse client across warm invocations (Render keeps the process alive).
 // Use generate_session_locally to avoid an extra YouTube roundtrip on cold start.
+// We pass a session-bound PO token (cold-start) + visitor_data so that
+// datacenter/cloud IPs that YouTube would otherwise block with LOGIN_REQUIRED
+// ("Sign in to confirm you're not a bot") can still fetch playable formats.
+// The per-video (content-bound) PO token is appended to each googlevideo URL
+// in getFormats() — that's the one that actually unblocks streaming.
 let _yt = null;
 let _clientPromise = null;
+let _visitorData = null;
+
+// A session-bound cold-start PO token. Used in the InnerTube player request
+// context (serviceIntegrityDimensions.poToken). We mint it once for the
+// minter's lifetime using a stable content binding ("visitor_data" style).
+let _sessionPoToken = null;
+
 export async function getClient() {
   if (_yt) return _yt;
   if (_clientPromise) return _clientPromise;
@@ -21,11 +38,56 @@ export async function getClient() {
     retrieve_player: true,
     enable_session_cache: false,
     generate_session_locally: true,
-  }).then(c => { _yt = c; return c; }).catch(e => {
+  }).then(async (c) => {
+    // Grab visitor_data from the session (used for the InnerTube context and
+    // as a stable content binding for the session PO token).
+    try {
+      _visitorData = c.session?.context?.client?.visitorData || null;
+    } catch {}
+
+    // Mint a session-bound PO token (best-effort; if it fails we still try —
+    // some IPs work without it and the per-video token is the real fix).
+    if (_visitorData && !_sessionPoToken) {
+      try {
+        _sessionPoToken = await getPoTokenForVideo(_visitorData);
+      } catch (e) {
+        console.error('[_lib] session po token failed:', e?.message || e);
+      }
+    }
+
+    _yt = c;
+    return c;
+  }).catch(e => {
     _clientPromise = null;
     throw e;
   });
   return _clientPromise;
+}
+
+// Re-create the client with a PO token once we have one. Called lazily.
+async function getClientWithPoToken() {
+  const c = await getClient();
+  if (!_sessionPoToken) return c;
+  // youtubei.js accepts po_token + visitor_data in Innertube.create options.
+  // Re-create once so the player request carries the session PO token.
+  if (!c.__poAttached) {
+    try {
+      const c2 = await Innertube.create({
+        retrieve_player: true,
+        enable_session_cache: false,
+        generate_session_locally: true,
+        visitor_data: _visitorData || undefined,
+        po_token: _sessionPoToken || undefined,
+      });
+      c2.__poAttached = true;
+      _yt = c2;
+      return c2;
+    } catch (e) {
+      console.error('[_lib] po-attached client failed, using plain:', e?.message || e);
+      c.__poAttached = true;
+    }
+  }
+  return c;
 }
 
 // Determine which clients are actually supported by the installed youtubei.js version.
@@ -70,14 +132,28 @@ export function extractId(url) {
 }
 
 export async function getFormats(videoId) {
-  const yt = await getClient();
+  const yt = await getClientWithPoToken();
   const player = yt.session?.player;
   const errs = [];
   let best = null;
 
+  // Mint a content-bound PO token for this video (best-effort). This is sent
+  // in the InnerTube "player" request context to satisfy YouTube's PO Token
+  // requirement on datacenter IPs (which otherwise return LOGIN_REQUIRED).
+  // NOTE: We do NOT append &pot= to the googlevideo stream URLs — the
+  // ANDROID_VR client returns pre-signed URLs that stream fine on their own
+  // (googlevideo just requires an in-bounds Range header, handled in
+  // download.js). Appending pot there can actually cause 403s.
+  const contentPoToken = await getPoTokenForVideo(videoId);
+
   for (const client of PREFERRED_CLIENTS) {
     try {
-      const info = await yt.getBasicInfo(videoId, { client });
+      // Pass the session PO token through the player request context so the
+      // InnerTube "player" call itself isn't rejected with LOGIN_REQUIRED.
+      const info = await yt.getBasicInfo(videoId, {
+        client,
+        poToken: contentPoToken || _sessionPoToken || undefined,
+      });
       const sd = info?.streaming_data;
       const formats = [
         ...(sd?.adaptive_formats || []),
@@ -89,7 +165,7 @@ export async function getFormats(videoId) {
         continue;
       }
 
-      // Resolve direct URLs for each format
+      // Resolve direct URLs for each format (no pot appended — see note above).
       const resolved = formats
         .map(f => {
           let url = f.url || f.deciphered_url;
