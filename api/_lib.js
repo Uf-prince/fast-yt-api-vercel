@@ -188,12 +188,28 @@ export async function getFormats(videoId) {
 
   for (const client of getClientOrder()) {
     try {
-      // Pass the session PO token through the player request context so the
-      // InnerTube "player" call itself isn't rejected with LOGIN_REQUIRED.
-      const info = await yt.getBasicInfo(videoId, {
-        client,
-        poToken: contentPoToken || _sessionPoToken || undefined,
-      });
+      // When a cookie is set, the WEB / WEB_EMBEDDED clients authenticate
+      // best with a FRESH Innertube session (cookie-only, no PO token) rather
+      // than the shared PO-token session — the shared session's context
+      // (visitor_data + PO token + ANDROID_VR-style client) can conflict with
+      // the web auth flow and cause empty "failed with status" errors.
+      let info;
+      if (YOUTUBE_COOKIE && (client === 'WEB' || client === 'WEB_EMBEDDED')) {
+        const freshYt = await Innertube.create({
+          retrieve_player: true,
+          enable_session_cache: false,
+          generate_session_locally: false,
+          cookie: YOUTUBE_COOKIE,
+        });
+        info = await freshYt.getBasicInfo(videoId, client);
+      } else {
+        // Pass the session PO token through the player request context so the
+        // InnerTube "player" call itself isn't rejected with LOGIN_REQUIRED.
+        info = await yt.getBasicInfo(videoId, {
+          client,
+          poToken: contentPoToken || _sessionPoToken || undefined,
+        });
+      }
       const sd = info?.streaming_data;
       const formats = [
         ...(sd?.adaptive_formats || []),
