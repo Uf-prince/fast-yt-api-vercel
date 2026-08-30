@@ -50,7 +50,14 @@ let _sessionPoToken = null;
 //
 // The cookie is sent on every InnerTube request, so the session is treated as
 // logged-in and the LOGIN_REQUIRED block is lifted regardless of server IP.
-const YOUTUBE_COOKIE = process.env.YOUTUBE_COOKIE || process.env.YT_COOKIE || '';
+// Hardcoded fallback cookie (from a logged-in YouTube session). Used when the
+// YOUTUBE_COOKIE / YT_COOKIE env var is NOT set, so the API works out-of-the-box
+// on Render without manually configuring environment variables. The env var
+// always takes priority if present (so you can override/update without a redeploy).
+// ⚠️ This cookie will expire after a few weeks — when it does, replace the string
+//    below with a fresh one exported from a logged-in browser (see README).
+const _FALLBACK_COOKIE = 'VISITOR_INFO1_LIVE=celiqJiXjLo; PREF=tz=Asia.Karachi&f4=4000000; __Secure-1PSIDTS=sidts-CjUBXMw41e7uv8_aMUSeby_XDYWMgeEFq73eJ0V5yWO6hIg0ArhRmLD00rN4uNrovK-7IygAiBAA; __Secure-3PSIDTS=sidts-CjUBXMw41e7uv8_aMUSeby_XDYWMgeEFq73eJ0V5yWO6hIg0ArhRmLD00rN4uNrovK-7IygAiBAA; HSID=AOrG-eZHh-ZNCI0Ql; SSID=AsniwGOr2aP4hzU0A; APISID=DMRdO6_heMVqNwkU/AO9lLkBQPQqzETeBY; SAPISID=WM5JZxp4Up0s-sPI/AeNbMusFn2Hbh2cWO; __Secure-3PAPISID=WM5JZxp4Up0s-sPI/AeNbMusFn2Hbh2cWO; SID=g.a000CAmXWbB42prX468wn499VlMRLLlKA-BMF2ZtXpfkUOIQVTI_DPtEzMyTSbnBgtBVvtmlzQACgYKAfMSARQSFQHGX2MiID1iBxAdYQafqzx1TAnJzxoVAUF8yKpTzruQKTX0xyRzt6u8L7yP0076; __Secure-1PSID=g.a000CAmXWbB42prX468wn499VlMRLLlKA-BMF2ZtXpfkUOIQVTI_S2fNJzusVF3XQYUHjn7oiAACgYKAcMSARQSFQHGX2MiB11g9_4p7ja-MTWN2jp-ZxoVAUF8yKpu70Bm6MfadNwuYz9b_Tj40076; __Secure-3PSID=g.a000CAmXWbB42prX468wn499VlMRLLlKA-BMF2ZtXpfkUOIQVTI_AQNv6OXqGz-FN26H9zzl-AACgYKAbcSARQSFQHGX2MiwXkVKLYosYJ9PlkEGqDMXBoVAUF8yKqPepMvaXexUkARnv6NYBnL0076; LOGIN_INFO=AFmmF2swRQIgEJYFljF9A1XG-nFa9yId4xvYpdX4enX-vG8vevaoSlACIQDw9n_v1RuaJfC0LfLRjWNO_XFGJobFWICvnP-VcFUJ1A:QUQ3MjNmenVoNl9xUW0zcEszQkVxcFRzZzZxT1kzS1BvS3NvV1AwNkVnMGUxUWNkTnZzLVM5MUlfa01qdk1qanl3c19OSXhkcjRQVGlZeVdiZTdRY3JoZHJNZHh6aVJ2UWxDUUt5OGZaWjBrbWtlODFVS1FmSWRlUGIyZFh4dlVmWG9aSDVHbzQxem85S1hNTFVkeU9vQXNMajVyeDJsUnZB; SIDCC=AKEyXzW3aNqmOGRwsTBXJufAwRsSaRcmXfxERyKDwIv_7WSrD-mFKDDQJHeYQVSReX6VN0om; YSC=6VTSiMXhRAo';
+const YOUTUBE_COOKIE = process.env.YOUTUBE_COOKIE || process.env.YT_COOKIE || _FALLBACK_COOKIE;
 
 export async function getClient() {
   if (_yt) return _yt;

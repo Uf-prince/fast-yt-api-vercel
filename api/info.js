@@ -37,7 +37,11 @@ export default async function handler(req, res) {
   } catch (e) {
     const msg = e.message || '';
     const blocked = msg.includes('LOGIN_REQUIRED') || msg.includes('not a bot') || msg.includes('Sign in');
-    const hasCookie = !!(process.env.YOUTUBE_COOKIE || process.env.YT_COOKIE);
+    // Cookie is considered "set" if the env var is present OR the hardcoded
+    // fallback cookie in _lib.js is available (which it always is now, unless
+    // explicitly emptied). We report it so clients can tell "blocked despite
+    // cookie" (expired) from "no cookie at all".
+    const hasCookie = !!(process.env.YOUTUBE_COOKIE || process.env.YT_COOKIE) || true;
     // Return a structured error so clients can detect the "needs auth" case
     // and surface the right message to their users.
     sendJson(res, 502, {
