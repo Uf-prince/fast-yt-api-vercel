@@ -13,7 +13,7 @@
 //      Streams the file in 256KB bounded Range requests, refreshing the
 //      googlevideo URL when it 403s (each URL serves ~a few hundred KB from
 //      a datacenter IP before throttling). Slow but works headlessly.
-import { getClient, extractId, getFormats, pickFormat, safeName, sendJson } from './_lib.js';
+import { getClient, extractId, getFormats, getAllResolved, pickFormat, safeName, sendJson } from './_lib.js';
 
 const IOS_UA = 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)';
 const CHUNK = 256 * 1024; // 256 KiB — safely under googlevideo's per-request cap.
@@ -40,18 +40,26 @@ export default async function handler(req, res) {
   const wantProxy = String(req.query.proxy || '') === '1';
 
   try {
-    const { info, resolved } = await getFormats(id);
-    const picked = pickFormat(resolved, type, quality);
+    const { info, resolved, manifests } = await getFormats(id);
+    const all = getAllResolved({ info, resolved, manifests });
+    const picked = pickFormat(all, type, quality);
     if (!picked) return sendJson(res, 404, { error: `no ${type} format found` });
 
     const mediaUrl = picked.url;
+    const isManifest = picked.is_manifest;
     const mime = picked.f.mime_type || (type === 'audio' ? 'audio/mp4' : 'video/mp4');
-    const ext = mime.includes('webm') ? 'webm' : mime.includes('mp4') ? 'mp4' : 'm4a';
+    const ext = isManifest === 'hls' ? 'm3u8' : isManifest === 'dash' ? 'mpd' : (mime.includes('webm') ? 'webm' : mime.includes('mp4') ? 'mp4' : 'm4a');
     const base = safeName(info.basic_info?.title);
     const filename = `${base}.${ext}`;
 
     // ── PRIMARY: redirect to the direct googlevideo URL ──────────────────────
     // The browser (residential IP) handles the download with full Range/resume.
+    if (isManifest) {
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.redirect(302, mediaUrl);
+    }
+
     if (!wantProxy) {
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -105,7 +113,7 @@ export default async function handler(req, res) {
           refreshes++;
           try {
             const fresh = await getFormats(id);
-            const fp = pickFormat(fresh.resolved, type, quality);
+            const fp = pickFormat(getAllResolved(fresh), type, quality);
             if (fp?.url) currentUrl = fp.url;
           } catch {}
           await sleep(800);

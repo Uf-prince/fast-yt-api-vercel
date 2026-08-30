@@ -1,6 +1,6 @@
 // api/info.js — Vercel serverless: GET /api/info?url=YOUTUBE_URL
 // Returns JSON: title, author, thumbnail, duration, all formats with direct googlevideo URLs
-import { getClient, extractId, getFormats, sendJson } from './_lib.js';
+import { getClient, extractId, getFormats, getAllResolved, sendJson } from './_lib.js';
 
 export default async function handler(req, res) {
   const url = req.query.url;
@@ -10,15 +10,17 @@ export default async function handler(req, res) {
 
   const t0 = Date.now();
   try {
-    const { info, resolved } = await getFormats(id);
-    const medias = resolved.map(({ f, url: u }) => {
+    const { info, resolved, manifests, client } = await getFormats(id);
+    const all = getAllResolved({ info, resolved, manifests });
+    const medias = all.map(({ f, url: u, is_manifest }) => {
       const mime = f.mime_type || '';
-      const isAudio = mime.startsWith('audio') || (f.has_audio && !f.has_video);
+      const isAudio = is_manifest ? false : (mime.startsWith('audio') || (f.has_audio && !f.has_video));
       return {
         itag: f.itag,
-        type: isAudio ? 'audio' : 'video',
-        quality: isAudio ? `${Math.round((f.bitrate||0)/1000)}kbps` : `${f.height||'?'}p`,
-        ext: mime.includes('webm') ? 'webm' : mime.includes('mp4') ? 'mp4' : 'm4a',
+        type: is_manifest ? 'manifest' : (isAudio ? 'audio' : 'video'),
+        manifest: is_manifest || undefined,
+        quality: isAudio ? `${Math.round((f.bitrate||0)/1000)}kbps` : (is_manifest ? 'adaptive' : `${f.height||'?'}p`),
+        ext: mime.includes('webm') ? 'webm' : mime.includes('mp4') ? 'mp4' : (is_manifest === 'hls' ? 'm3u8' : is_manifest === 'dash' ? 'mpd' : 'm4a'),
         mimeType: mime,
         hasAudio: f.has_audio,
         hasVideo: f.has_video,
@@ -31,6 +33,7 @@ export default async function handler(req, res) {
       author: info.basic_info?.author,
       duration: info.basic_info?.duration,
       thumbnail: info.basic_info?.thumbnail?.[0]?.url,
+      client,
       medias,
       time_ms: Date.now() - t0,
     });
