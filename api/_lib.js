@@ -194,6 +194,7 @@ export async function getFormats(videoId) {
       // (visitor_data + PO token + ANDROID_VR-style client) can conflict with
       // the web auth flow and cause empty "failed with status" errors.
       let info;
+      let decipherPlayer = player;
       if (YOUTUBE_COOKIE && (client === 'WEB' || client === 'WEB_EMBEDDED')) {
         const freshYt = await Innertube.create({
           retrieve_player: true,
@@ -202,6 +203,9 @@ export async function getFormats(videoId) {
           cookie: YOUTUBE_COOKIE,
         });
         info = await freshYt.getBasicInfo(videoId, client);
+        // Use the fresh session's player for deciphering (the shared session's
+        // player has a different client context and may fail to decipher WEB URLs).
+        decipherPlayer = freshYt.session?.player || decipherPlayer;
       } else {
         // Pass the session PO token through the player request context so the
         // InnerTube "player" call itself isn't rejected with LOGIN_REQUIRED.
@@ -222,22 +226,36 @@ export async function getFormats(videoId) {
       }
 
       // Resolve direct URLs for each format (no pot appended — see note above).
-      const resolved = formats
-        .map(f => {
-          let url = f.url || f.deciphered_url;
-          if (!url && (f.signature_cipher || f.cipher) && player) {
-            try { url = player.decipher(f.signature_cipher || f.cipher); } catch {}
-          }
-          return { f, url };
-        })
-        .filter(r => r.url);
+      // NOTE: WEB-client format objects use getters for `url`/`signature_cipher`/
+      // `cipher` that return undefined until deciphered. The correct way to get
+      // a playable URL in youtubei.js v18 is `player.decipher(format_object)` —
+      // which returns a Promise<string>. Mobile/VR clients expose plain string
+      // `f.url`/`f.deciphered_url`, so we try those first for speed.
+      const resolved = await Promise.all(formats.map(async f => {
+        let url = f.deciphered_url || f.url;
+        // f.url can be a Promise (lazy) on some clients
+        if (url && typeof url.then === 'function') {
+          try { url = await url; } catch { url = undefined; }
+        }
+        // If no direct URL, decipher via the player (pass the whole format object)
+        if (!url && decipherPlayer) {
+          try {
+            const d = decipherPlayer.decipher(f);
+            url = (d && typeof d.then === 'function') ? await d : d;
+          } catch {}
+        }
+        return { f, url };
+      }));
+
+      // Drop entries with no resolvable URL
+      const resolvedFiltered = resolved.filter(r => r.url && typeof r.url === 'string');
 
       // Prefer the client that yields the most direct URLs
-      if (!best || resolved.length > best.resolved.length) {
-        best = { info, resolved, client };
+      if (!best || resolvedFiltered.length > best.resolved.length) {
+        best = { info, resolved: resolvedFiltered, client };
       }
       // If we got a good number of direct URLs, stop trying more clients
-      if (resolved.length >= 5) break;
+      if (resolvedFiltered.length >= 5) break;
     } catch (e) {
       const msg = e.message?.slice(0, 100) || 'error';
       // "Invalid client" means this youtubei.js version doesn't support it — skip silently
