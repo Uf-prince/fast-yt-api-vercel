@@ -35,6 +35,20 @@ export default async function handler(req, res) {
       time_ms: Date.now() - t0,
     });
   } catch (e) {
-    sendJson(res, 502, { error: e.message });
+    const msg = e.message || '';
+    const blocked = msg.includes('LOGIN_REQUIRED') || msg.includes('not a bot') || msg.includes('Sign in');
+    const hasCookie = !!(process.env.YOUTUBE_COOKIE || process.env.YT_COOKIE);
+    // Return a structured error so clients can detect the "needs auth" case
+    // and surface the right message to their users.
+    sendJson(res, 502, {
+      error: msg,
+      needs_auth: blocked,
+      cookie_set: hasCookie,
+      hint: blocked
+        ? (hasCookie
+            ? 'YouTube cookies are set but appear expired/invalid. Re-export cookies from a logged-in browser and update YOUTUBE_COOKIE.'
+            : 'Set the YOUTUBE_COOKIE env var with cookies from a logged-in YouTube account to bypass the "not a bot" block on datacenter IPs. See README.')
+        : undefined,
+    });
   }
 }

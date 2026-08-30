@@ -67,7 +67,9 @@ Health check used by Render's monitoring (`{ "ok": true, "ts": ... }`).
    - **Health Check Path:** `/health`
 4. Click **Create Web Service**. Done.
 
-No environment variables are required. `youtubei.js` + `express` install automatically during build.
+No environment variables are required for most videos. `youtubei.js` + `express` install automatically during build.
+
+> **Important — some videos need cookies.** See [Bypassing "Sign in to confirm you're not a bot"](#bypassing-sign-in-to-confirm-youre-not-a-bot-login_required) below. If `/api/info` returns `needs_auth: true`, set the `YOUTUBE_COOKIE` env var on Render.
 
 ## Run locally
 ```bash
@@ -85,6 +87,8 @@ The YouTube engine uses `youtubei.js` with the **ANDROID_VR client** (primary) w
 
 > **Why ANDROID_VR?** YouTube blocks datacenter IPs on most clients (IOS, WEB, etc.) with "Sign in to confirm you're not a bot". The ANDROID_VR client is one of the few that doesn't require a PO Token and still returns direct googlevideo CDN URLs. IOS is kept as a fallback since on some IPs it returns pre-signed URLs (no deciphering needed).
 
+> **Limitation:** ANDROID_VR (and PO tokens in general) bypass the block for *most* videos, but a small number of high-enforcement videos still return `LOGIN_REQUIRED` from datacenter IPs even with a valid PO token. For those, the only reliable fix is an authenticated session via the `YOUTUBE_COOKIE` env var — see the section below.
+
 ## Speed
 
 - `/api/info` responds in ~400-600ms
@@ -93,13 +97,14 @@ The YouTube engine uses `youtubei.js` with the **ANDROID_VR client** (primary) w
 ## Files
 
 ```
-server.js         # Express server — mounts API handlers, serves landing page, /health check
+server.js         # Express server — mounts API handlers, serves landing page, /health + /api/debug
 api/_lib.js       # Shared youtubei.js helpers (getClient, extractId, getFormats, pickFormat)
-                   # Uses ANDROID_VR client (no PO Token, works on datacenter IPs)
-api/info.js       # GET /api/info — metadata + all format URLs
+                   # Uses ANDROID_VR client (no PO Token) + optional YOUTUBE_COOKIE for auth
+api/info.js       # GET /api/info — metadata + all format URLs (returns needs_auth on bot block)
 api/download.js   # GET /api/download — stream or redirect to media file
+api/poToken.js    # PO Token (Proof of Origin) minting via bgutils-js (BotGuard) + jsdom
 render.yaml       # Render Blueprint (one-click deploy)
-package.json      # express + youtubei.js deps, start script
+package.json      # express + youtubei.js + bgutils-js + jsdom deps, start script
 index.html        # Landing page
 ```
 
@@ -108,3 +113,79 @@ index.html        # Landing page
 - The download endpoint streams from Google's CDN with Range support; if streaming fails it falls back to a 302 redirect to the direct googlevideo URL.
 - The googlevideo URLs are IP-bound and expire after ~6 hours. Always fetch fresh URLs via `/api/info` or `/api/download`.
 - On Render's free tier the service spins down after 15 min of inactivity; the first request after idle takes ~30-50s to cold-start.
+
+## Bypassing "Sign in to confirm you're not a bot" (LOGIN_REQUIRED)
+
+### Why it happens
+
+YouTube shows **"Sign in to confirm you're not a bot"** (error `LOGIN_REQUIRED`) when an InnerTube request comes from a **datacenter / cloud IP** (Render, Vercel, AWS, GCP, your sandbox, etc.) for a video with **higher PO-Token enforcement**. The block is based on **IP reputation** plus a BotGuard runtime check that fails in a headless Node.js environment.
+
+The ANDROID_VR client + the built-in PO-token minting (via `bgutils-js`) bypass this for **most** videos, but a small number of videos still get blocked. When that happens, `/api/info` returns:
+
+```json
+{
+  "error": "No playable formats found. Tried: ... LOGIN_REQUIRED ...",
+  "needs_auth": true,
+  "cookie_set": false,
+  "hint": "Set the YOUTUBE_COOKIE env var with cookies from a logged-in YouTube account to bypass the \"not a bot\" block on datacenter IPs. See README."
+}
+```
+
+`needs_auth: true` + `cookie_set: false` means you need to set the `YOUTUBE_COOKIE` env var.
+`needs_auth: true` + `cookie_set: true` means cookies are set but expired/invalid — re-export them.
+
+### The fix — set `YOUTUBE_COOKIE`
+
+The **only reliable** way past the block is to send requests as a **logged-in** YouTube user. This repo reads cookies from the `YOUTUBE_COOKIE` (or `YT_COOKIE`) env var and attaches them to every InnerTube request, so YouTube treats the server as an authenticated client and lifts the `LOGIN_REQUIRED` block regardless of the server's IP.
+
+#### Step 1 — Export cookies from a logged-in browser
+
+1. Open **https://www.youtube.com** in Chrome/Firefox/Edge and make sure you're **signed in**.
+2. Open **DevTools** (`F12` or `Ctrl+Shift+I`) → **Application** tab (Chrome/Edge) or **Storage** tab (Firefox) → **Cookies** → `https://www.youtube.com`.
+3. You need at minimum these cookies (copy each **Value**):
+   - `SAPISID` (or `__Secure-3PAPISID`)
+   - `SID`
+   - `HSID`
+   - `SSID`
+   - `APISID`
+4. Build a single cookie-header string, semicolon-separated:
+   ```
+   SAPISID=<value>; SID=<value>; HSID=<value>; SSID=<value>; APISID=<value>
+   ```
+   *(Easier alternative: install the **"Get cookies.txt LOCALLYS"** Chrome extension, export a `cookies.txt` for youtube.com, then flatten the rows into a `name=value; name=value; ...` string.)*
+
+> **Tip:** You don't strictly need `SAPISIDHASH` — `youtubei.js` computes it automatically from `SAPISID` + the origin. Just include `SAPISID` (or `__Secure-3PAPISID`) plus `SID`, `HSID`, `SSID`, `APISID`.
+
+#### Step 2 — Set the env var on Render
+
+1. Render dashboard → your web service (`umar-yt-api` or whatever you named it) → **Environment** tab.
+2. Click **Add Environment Variable**.
+3. **Key:** `YOUTUBE_COOKIE`
+4. **Value:** paste the full cookie string from Step 1.
+5. Click **Save Changes**.
+6. Render auto-redeploys. Wait ~1-2 min, then test again:
+
+```
+https://your-app.onrender.com/api/info?url=https://youtu.be/w4a_3wYUMr0
+```
+
+You should now get a `200` with the full `medias` array. ✅
+
+#### Step 3 (optional) — Set it locally too
+
+```bash
+export YOUTUBE_COOKIE='SAPISID=xxxx; SID=yyyy; HSID=zzzz; SSID=...; APISID=...'
+npm start
+```
+
+### Keeping cookies fresh
+
+YouTube auth cookies (especially `SAPISID`) **expire** — typically after a few weeks, or sooner if you sign out / change password. When they expire you'll see `needs_auth: true` + `cookie_set: true`. Just repeat Step 1 and update the env var on Render. Using a dedicated Google account (not your main one) for this API is recommended.
+
+### Debug endpoint
+
+`GET /api/debug?video=VIDEO_ID` runs a self-check of the PO-token stack (jsdom, bgutils-js, minter) and tries to mint a token. Useful if you want to confirm the BotGuard deps are healthy on Render:
+
+```
+https://your-app.onrender.com/api/debug?video=dQw4w9WgXcQ
+```

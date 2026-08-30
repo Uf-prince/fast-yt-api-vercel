@@ -31,13 +31,37 @@ let _visitorData = null;
 // minter's lifetime using a stable content binding ("visitor_data" style).
 let _sessionPoToken = null;
 
+// Optional YouTube cookies (from a logged-in browser session).
+// Set via the YOUTUBE_COOKIE env var on Render. This is the ONLY reliable
+// way to bypass "Sign in to confirm you're not a bot" (LOGIN_REQUIRED) for
+// datacenter/cloud IPs (Render, Vercel, AWS) on videos with higher PO-Token
+// enforcement. PO tokens alone do NOT fix it because YouTube's BotGuard
+// runtime checks fail in a headless Node.js environment.
+//
+// HOW TO GET COOKIES:
+//   1. Open youtube.com in your browser and sign in.
+//   2. Use a cookie-export extension (e.g. "Get cookies.txt" / "EditThisCookie")
+//      and copy the cookie header value, OR export a netscape cookies.txt and
+//      flatten it. The simplest: open DevTools > Application > Cookies and copy
+//      the values, then build a single string:
+//        "SAPISID=...; __Secure-3PAPISID=...; SID=...; HSID=...; SSID=...; APISID=...; SAPISIDHASH=..."
+//      At minimum you need SAPISID (or __Secure-3PAPISID) + SID + HSID + SSID.
+//   3. Set the env var:  YOUTUBE_COOKIE='SAPISID=xxxx; SID=yyyy; ...'
+//
+// The cookie is sent on every InnerTube request, so the session is treated as
+// logged-in and the LOGIN_REQUIRED block is lifted regardless of server IP.
+const YOUTUBE_COOKIE = process.env.YOUTUBE_COOKIE || process.env.YT_COOKIE || '';
+
 export async function getClient() {
   if (_yt) return _yt;
   if (_clientPromise) return _clientPromise;
   _clientPromise = Innertube.create({
     retrieve_player: true,
     enable_session_cache: false,
-    generate_session_locally: true,
+    generate_session_locally: !_visitorData && !YOUTUBE_COOKIE,
+    // When cookies are provided, YouTube treats us as a logged-in user —
+    // this is what actually bypasses LOGIN_REQUIRED on datacenter IPs.
+    cookie: YOUTUBE_COOKIE || undefined,
   }).then(async (c) => {
     // Grab visitor_data from the session (used for the InnerTube context and
     // as a stable content binding for the session PO token).
@@ -75,9 +99,10 @@ async function getClientWithPoToken() {
       const c2 = await Innertube.create({
         retrieve_player: true,
         enable_session_cache: false,
-        generate_session_locally: true,
+        generate_session_locally: !_visitorData && !YOUTUBE_COOKIE,
         visitor_data: _visitorData || undefined,
         po_token: _sessionPoToken || undefined,
+        cookie: YOUTUBE_COOKIE || undefined,
       });
       c2.__poAttached = true;
       _yt = c2;
@@ -194,7 +219,17 @@ export async function getFormats(videoId) {
   }
 
   if (!best || !best.resolved.length) {
-    throw new Error('No playable formats found. Tried: ' + errs.join(' | '));
+    const errsStr = errs.join(' | ');
+    const blockedByBotCheck = errs.some(e => e.includes('LOGIN_REQUIRED') || e.includes('not a bot') || e.includes('Sign in'));
+    let msg = 'No playable formats found. Tried: ' + errsStr;
+    if (blockedByBotCheck && !YOUTUBE_COOKIE) {
+      msg += '\n\nThis video is blocked by YouTube ("Sign in to confirm you\'re not a bot") because the server runs on a datacenter IP (Render/AWS/etc). '
+        + 'FIX: Set the YOUTUBE_COOKIE environment variable on Render with cookies exported from a logged-in YouTube account. '
+        + 'See the README for step-by-step instructions. PO tokens alone cannot bypass this for high-enforcement videos.';
+    } else if (blockedByBotCheck && YOUTUBE_COOKIE) {
+      msg += '\n\nCookies are set (YOUTUBE_COOKIE) but the video is still blocked. The cookies may be expired or invalid — re-export them from a logged-in browser and update the env var.';
+    }
+    throw new Error(msg);
   }
   return best;
 }
