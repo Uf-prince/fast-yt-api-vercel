@@ -97,18 +97,42 @@ export async function getClientWithPoTokenExposed() {
 
 // A cookie-free Innertube instance for mobile/VR clients. Web cookies cause
 // IOS/ANDROID_VR/ANDROID/TV player requests to fail with HTTP 400.
+// We attach the session PO token + visitor_data at the client level too,
+// which helps with bot-detection on datacenter IPs for some videos.
 async function getMobileClient() {
   if (_ytMobile) return _ytMobile;
   if (_mobileClientPromise) return _mobileClientPromise;
-  _mobileClientPromise = Innertube.create({
-    retrieve_player: true,
-    enable_session_cache: false,
-    generate_session_locally: true,
-    // NO cookie — mobile clients use their own auth flow + PO token.
-  }).then((c) => {
+  _mobileClientPromise = (async () => {
+    // First create a base client to get visitor_data.
+    const base = await Innertube.create({
+      retrieve_player: true,
+      enable_session_cache: false,
+      generate_session_locally: true,
+    });
+    _visitorData = base.session?.context?.client?.visitorData || _visitorData;
+
+    // Mint a session PO token for the visitor_data if we don't have one yet.
+    if (_visitorData && !_sessionPoToken) {
+      try {
+        _sessionPoToken = await getPoTokenForVideo(_visitorData);
+      } catch (e) {
+        console.error('[_lib] mobile session po token failed:', e?.message || e);
+      }
+    }
+
+    // Recreate with visitor_data + session PO token attached at client level.
+    // This makes the session look more like a real device to YouTube.
+    const c = await Innertube.create({
+      retrieve_player: true,
+      enable_session_cache: false,
+      generate_session_locally: false,
+      visitor_data: _visitorData || undefined,
+      po_token: _sessionPoToken || undefined,
+      // NO cookie — mobile clients use their own auth flow + PO token.
+    });
     _ytMobile = c;
     return c;
-  }).catch(e => {
+  })().catch(e => {
     _mobileClientPromise = null;
     throw e;
   });
